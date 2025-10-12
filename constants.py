@@ -3,3 +3,17 @@ LOCAL_PORT = 1053
 
 RESOLVER_IP = "8.8.8.8"
 RESOLVER_PORT = 53
+
+DNS_TYPES = {
+    1: "A",
+    2: "NS",
+    5: "CNAME",
+    6: "SOA",
+    12: "PTR",
+    15: "MX",
+    16: "TXT",
+    28: "AAAA",
+    33: "SRV",
+    41: "OPT",
+    255: "ANY",
+}
