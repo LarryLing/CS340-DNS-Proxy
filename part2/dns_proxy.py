@@ -1,4 +1,4 @@
-from asyncio import TimeoutError
+from asyncio import get_event_loop
 from struct import unpack
 
 from constants import (
@@ -19,91 +19,90 @@ class DNSProxy:
         self.resolver_address = (RESOLVER_IP, RESOLVER_PORT)
         self.transport = None
 
-    async def handle_client(self, data, client_address):
-        self.log(data, self.proxy_address)
+    async def handle_client(self, query_packet, client_address):
+        self.log_packet(query_packet, self.proxy_address)
 
-        resolver_message = await self.query_resolver(data)
+        response_packet = await self.invoke_doh_resolver(query_packet)
 
-        if resolver_message:
-            self.log(resolver_message, self.resolver_address)
-            self.transport.sendto(resolver_message, client_address)
+        if response_packet:
+            self.log_packet(response_packet, self.resolver_address)
+            self.transport.sendto(response_packet, client_address)
         else:
             print(f"Failed to communicate with DoH API resolver for {client_address}")
 
-    async def query_resolver(self, data, max_tries=3):
-        parsed_query_data = DNSRecord.parse(data)
+    async def invoke_doh_resolver(self, query_packet, max_attempts=3):
+        dns_query = DNSRecord.parse(query_packet)
 
-        query_name = parsed_query_data.questions[0].qname
-        query_type = parsed_query_data.questions[0].qtype
+        domain_name = dns_query.questions[0].qname
+        record_type = dns_query.questions[0].qtype
 
-        url = (
-            f"https://dns.google/resolve?name={query_name}&type={DNS_TYPES[query_type]}"
-        )
+        url = f"https://dns.google/resolve?name={domain_name}&type={DNS_TYPES[record_type]}"
 
-        for tries in range(max_tries):
+        loop = get_event_loop()
+
+        for attempt in range(1, max_attempts + 1):
             try:
-                response = get(url)
+                http_response = await loop.run_in_executor(None, get, url)
+                http_response.raise_for_status()
+                response_json_data = http_response.json()
 
-                resolver_message = self.build_response_packet(
-                    parsed_query_data, response.json()
-                )
+                response_packet = self.build_dns_response(dns_query, response_json_data)
 
-                return resolver_message
+                return response_packet
 
             except Exception as e:
                 print(
-                    f"An error occurred while communicating with DoH API resolver: {e} (Attempt {tries + 1}/{max_tries})"
-                )
-
-            except TimeoutError:
-                print(
-                    f"Timeout waiting for response from DoH API resolver (Attempt {tries + 1}/{max_tries})"
+                    f"An error occurred while communicating with DoH API resolver: {e} (Attempt {attempt}/{max_attempts})"
                 )
 
         return None
 
-    def build_response_packet(self, query_data, response_data):
-        transaction_id = query_data.header.id
-        query_name = query_data.questions[0].qname
-        query_type = query_data.questions[0].qtype
+    def build_dns_response(self, query_data, doh_response):
+        question = query_data.questions[0]
 
-        dns_response_packet = DNSRecord(
-            DNSHeader(id=transaction_id, qr=1, aa=0, ra=1),
-            q=DNSQuestion(query_name, query_type),
+        dns_response = DNSRecord(
+            DNSHeader(
+                id=query_data.header.id,
+                qr=1,
+                aa=0,
+                ra=1,
+                rcode=doh_response.get("Status", 0),
+            ),
+            q=DNSQuestion(question.qname, question.qtype),
         )
 
-        for answer in response_data["Answer"]:
-            answer_name, answer_type, answer_ttl, answer_data = answer.values()
-
-            dns_response_packet.add_answer(
+        for answer in doh_response.get("Answer", []):
+            dns_response.add_answer(
                 RR(
-                    answer_name,
-                    answer_type,
-                    ttl=answer_ttl,
-                    rdata=DNS_TYPE_FUNCTIONS[answer_type](answer_data),
+                    answer["name"],
+                    answer["type"],
+                    ttl=answer["TTL"],
+                    rdata=DNS_TYPE_FUNCTIONS[answer["type"]](answer["data"]),
                 )
             )
 
-        return dns_response_packet.pack()
+        return dns_response.pack()
 
-    def log(self, data, address, offset=12):
+    def log_packet(self, packet, address):
         labels = []
-        current_offset = offset
+        current_offset = 12
 
         while True:
-            length = data[current_offset]
+            label_length = packet[current_offset]
             current_offset += 1
 
-            if length == 0:
+            if label_length == 0:
                 break
 
-            label = data[current_offset : current_offset + length].decode("ascii")
+            label = packet[current_offset : current_offset + label_length].decode(
+                "ascii"
+            )
             labels.append(label)
 
-            current_offset += length
+            current_offset += label_length
 
-        dns_type = unpack("!H", data[current_offset : current_offset + 2])[0]
+        record_type = unpack("!H", packet[current_offset : current_offset + 2])[0]
 
         print(
-            f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[dns_type]}, {len(data)} bytes"
+            f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[record_type]}, {len(packet)} bytes"
         )

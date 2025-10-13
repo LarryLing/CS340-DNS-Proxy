@@ -8,5 +8,5 @@ class ProxyDatagramProtocol(DatagramProtocol):
     def connection_made(self, transport):
         self.dns_proxy.transport = transport
 
-    def datagram_received(self, data, addr):
-        create_task(self.dns_proxy.handle_client(data, addr))
+    def datagram_received(self, query_packet, query_address):
+        create_task(self.dns_proxy.handle_client(query_packet, query_address))

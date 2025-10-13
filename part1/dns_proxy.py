@@ -11,42 +11,44 @@ class DNSProxy:
         self.resolver_address = (RESOLVER_IP, RESOLVER_PORT)
         self.transport = None
 
-    async def handle_client(self, data, client_address):
-        self.log(data, self.proxy_address)
+    async def handle_client(self, query_packet, client_address):
+        self.log_packet(query_packet, self.proxy_address)
 
-        resolver_message = await self.query_resolver(data)
+        response_packet = await self.invoke_upstream_resolver(query_packet)
 
-        if resolver_message:
-            self.log(resolver_message, self.resolver_address)
-            self.transport.sendto(resolver_message, client_address)
+        if response_packet:
+            self.log_packet(response_packet, self.resolver_address)
+            self.transport.sendto(response_packet, client_address)
         else:
             print(f"Failed to communicate with upstream resolver for {client_address}")
 
-    async def query_resolver(self, data, max_tries=3):
+    async def invoke_upstream_resolver(self, query_packet, max_attempts=3):
         resolver_socket = socket(AF_INET, SOCK_DGRAM)
         resolver_socket.setblocking(False)
 
         loop = get_event_loop()
 
         try:
-            for tries in range(max_tries):
+            for attempt in range(1, max_attempts + 1):
                 try:
-                    await loop.sock_sendto(resolver_socket, data, self.resolver_address)
+                    await loop.sock_sendto(
+                        resolver_socket, query_packet, self.resolver_address
+                    )
 
-                    resolver_message, _ = await wait_for(
+                    response_packet, _ = await wait_for(
                         loop.sock_recvfrom(resolver_socket, 2048), timeout=5.0
                     )
 
-                    return resolver_message
+                    return response_packet
 
                 except TimeoutError:
                     print(
-                        f"Timeout waiting for response from {self.resolver_address} (Attempt {tries + 1}/{max_tries})"
+                        f"Timeout waiting for response from {self.resolver_address} (Attempt {attempt}/{max_attempts})"
                     )
 
                 except Exception as e:
                     print(
-                        f"An error occurred while communicating with upstream resolver: {e} (Attempt {tries + 1}/{max_tries})"
+                        f"An error occurred while communicating with upstream resolver: {e} (Attempt {attempt}/{max_attempts})"
                     )
 
         finally:
@@ -54,24 +56,26 @@ class DNSProxy:
 
         return None
 
-    def log(self, data, address, offset=12):
+    def log_packet(self, packet, address):
         labels = []
-        current_offset = offset
+        current_offset = 12
 
         while True:
-            length = data[current_offset]
+            label_length = packet[current_offset]
             current_offset += 1
 
-            if length == 0:
+            if label_length == 0:
                 break
 
-            label = data[current_offset : current_offset + length].decode("ascii")
+            label = packet[current_offset : current_offset + label_length].decode(
+                "ascii"
+            )
             labels.append(label)
 
-            current_offset += length
+            current_offset += label_length
 
-        dns_type = unpack("!H", data[current_offset : current_offset + 2])[0]
+        record_type = unpack("!H", packet[current_offset : current_offset + 2])[0]
 
         print(
-            f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[dns_type]}, {len(data)} bytes"
+            f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[record_type]}, {len(packet)} bytes"
         )
