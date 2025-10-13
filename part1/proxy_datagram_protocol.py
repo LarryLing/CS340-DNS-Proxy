@@ -1,7 +1,7 @@
-import asyncio
+from asyncio import DatagramProtocol, create_task
 
 
-class ProxyDatagramProtocol(asyncio.DatagramProtocol):
+class ProxyDatagramProtocol(DatagramProtocol):
     def __init__(self, dns_proxy):
         self.dns_proxy = dns_proxy
 
@@ -9,4 +9,4 @@ class ProxyDatagramProtocol(asyncio.DatagramProtocol):
         self.dns_proxy.transport = transport
 
     def datagram_received(self, data, addr):
-        asyncio.create_task(self.dns_proxy.handle_client(data, addr))
+        create_task(self.dns_proxy.handle_client(data, addr))

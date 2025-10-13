@@ -1,8 +1,16 @@
-import asyncio
-import socket
-import struct
+from asyncio import TimeoutError
+from struct import unpack
 
-from constants import DNS_TYPES, LOCAL_IP, LOCAL_PORT, RESOLVER_IP, RESOLVER_PORT
+from constants import (
+    DNS_TYPE_FUNCTIONS,
+    DNS_TYPES,
+    LOCAL_IP,
+    LOCAL_PORT,
+    RESOLVER_IP,
+    RESOLVER_PORT,
+)
+from dnslib import RR, DNSHeader, DNSQuestion, DNSRecord
+from requests import get
 
 
 class DNSProxy:
@@ -20,39 +28,63 @@ class DNSProxy:
             self.log(resolver_message, self.resolver_address)
             self.transport.sendto(resolver_message, client_address)
         else:
-            print(f"Failed to communicate with upstream resolver for {client_address}")
+            print(f"Failed to communicate with DoH API resolver for {client_address}")
 
     async def query_resolver(self, data, max_tries=3):
-        resolver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        resolver_socket.setblocking(False)
+        parsed_query_data = DNSRecord.parse(data)
 
-        loop = asyncio.get_event_loop()
+        query_name = parsed_query_data.questions[0].qname
+        query_type = parsed_query_data.questions[0].qtype
 
-        try:
-            for tries in range(max_tries):
-                try:
-                    await loop.sock_sendto(resolver_socket, data, self.resolver_address)
+        url = (
+            f"https://dns.google/resolve?name={query_name}&type={DNS_TYPES[query_type]}"
+        )
 
-                    resolver_message, _ = await asyncio.wait_for(
-                        loop.sock_recvfrom(resolver_socket, 2048), timeout=5.0
-                    )
+        for tries in range(max_tries):
+            try:
+                response = get(url)
 
-                    return resolver_message
+                resolver_message = self.build_response_packet(
+                    parsed_query_data, response.json()
+                )
 
-                except asyncio.TimeoutError:
-                    print(
-                        f"Timeout waiting for response from {self.resolver_address} (Attempt {tries + 1}/{max_tries})"
-                    )
+                return resolver_message
 
-                except Exception as e:
-                    print(
-                        f"An error occurred while communicating with upstream resolver: {e} (Attempt {tries + 1}/{max_tries})"
-                    )
+            except Exception as e:
+                print(
+                    f"An error occurred while communicating with DoH API resolver: {e} (Attempt {tries + 1}/{max_tries})"
+                )
 
-        finally:
-            resolver_socket.close()
+            except TimeoutError:
+                print(
+                    f"Timeout waiting for response from DoH API resolver (Attempt {tries + 1}/{max_tries})"
+                )
 
         return None
+
+    def build_response_packet(self, query_data, response_data):
+        transaction_id = query_data.header.id
+        query_name = query_data.questions[0].qname
+        query_type = query_data.questions[0].qtype
+
+        dns_response_packet = DNSRecord(
+            DNSHeader(id=transaction_id, qr=1, aa=0, ra=1),
+            q=DNSQuestion(query_name, query_type),
+        )
+
+        for answer in response_data["Answer"]:
+            answer_name, answer_type, answer_ttl, answer_data = answer.values()
+
+            dns_response_packet.add_answer(
+                RR(
+                    answer_name,
+                    answer_type,
+                    ttl=answer_ttl,
+                    rdata=DNS_TYPE_FUNCTIONS[answer_type](answer_data),
+                )
+            )
+
+        return dns_response_packet.pack()
 
     def log(self, data, address, offset=12):
         labels = []
@@ -70,8 +102,8 @@ class DNSProxy:
 
             current_offset += length
 
-        dns_type = struct.unpack("!H", data[current_offset : current_offset + 2])[0]
+        dns_type = unpack("!H", data[current_offset : current_offset + 2])[0]
 
         print(
-            f"{address[0]}: {'.'.join(labels)}, Type {DNS_TYPES[dns_type]}, {len(data)} bytes"
+            f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[dns_type]}, {len(data)} bytes"
         )

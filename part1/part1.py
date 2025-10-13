@@ -1,4 +1,4 @@
-import asyncio
+from asyncio import Event, get_event_loop, run
 
 from constants import LOCAL_IP, LOCAL_PORT
 from dns_proxy import DNSProxy
@@ -8,14 +8,14 @@ from proxy_datagram_protocol import ProxyDatagramProtocol
 async def main():
     dns_proxy = DNSProxy()
 
-    loop = asyncio.get_event_loop()
+    loop = get_event_loop()
 
     transport, protocol = await loop.create_datagram_endpoint(
         lambda: ProxyDatagramProtocol(dns_proxy), local_addr=(LOCAL_IP, LOCAL_PORT)
     )
 
     try:
-        await asyncio.Event().wait()
+        await Event().wait()
 
     except KeyboardInterrupt:
         print("\nExiting...")
@@ -30,7 +30,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        run(main())
 
     except KeyboardInterrupt:
         pass

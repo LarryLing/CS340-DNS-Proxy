@@ -1,6 +1,6 @@
-import asyncio
-import socket
-import struct
+from asyncio import TimeoutError, get_event_loop, wait_for
+from socket import AF_INET, SOCK_DGRAM, socket
+from struct import unpack
 
 from constants import DNS_TYPES, LOCAL_IP, LOCAL_PORT, RESOLVER_IP, RESOLVER_PORT
 
@@ -23,23 +23,23 @@ class DNSProxy:
             print(f"Failed to communicate with upstream resolver for {client_address}")
 
     async def query_resolver(self, data, max_tries=3):
-        resolver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        resolver_socket = socket(AF_INET, SOCK_DGRAM)
         resolver_socket.setblocking(False)
 
-        loop = asyncio.get_event_loop()
+        loop = get_event_loop()
 
         try:
             for tries in range(max_tries):
                 try:
                     await loop.sock_sendto(resolver_socket, data, self.resolver_address)
 
-                    resolver_message, _ = await asyncio.wait_for(
+                    resolver_message, _ = await wait_for(
                         loop.sock_recvfrom(resolver_socket, 2048), timeout=5.0
                     )
 
                     return resolver_message
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     print(
                         f"Timeout waiting for response from {self.resolver_address} (Attempt {tries + 1}/{max_tries})"
                     )
@@ -70,8 +70,8 @@ class DNSProxy:
 
             current_offset += length
 
-        dns_type = struct.unpack("!H", data[current_offset : current_offset + 2])[0]
+        dns_type = unpack("!H", data[current_offset : current_offset + 2])[0]
 
         print(
-            f"{address[0]}: {'.'.join(labels)}, Type {DNS_TYPES[dns_type]}, {len(data)} bytes"
+            f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[dns_type]}, {len(data)} bytes"
         )
