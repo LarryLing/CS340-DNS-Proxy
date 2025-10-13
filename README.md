@@ -44,7 +44,7 @@ dig @127.0.0.1 -p 1053 google.com A
 
 ## Acknowledgements
 
-- [struct]("https://docs.python.org/3/library/struct.html")
-- [asyncio]("https://docs.python.org/3/library/asyncio.html")
-- [socket]("https://docs.python.org/3/library/socket.html")
-- [dnslib]("https://pypi.org/project/dnslib/")
+- [struct](https://docs.python.org/3/library/struct.html)
+- [asyncio](https://docs.python.org/3/library/asyncio.html)
+- [socket](https://docs.python.org/3/library/socket.html)
+- [dnslib](https://pypi.org/project/dnslib/)
