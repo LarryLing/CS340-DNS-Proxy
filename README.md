@@ -2,6 +2,8 @@
 
 ## Instructions
 
+### 1. Virtual Environment
+
 Ensure you are running this project from within a virtual environment
 
 ```sh
@@ -16,4 +18,33 @@ Install the libraries from `requirements.txt`
 pip install -r requirements.txt
 ```
 
-Code and instructions for running parts 1 and 2 can be found in their respective folders
+### 2. Starting The Proxy
+
+Run the following command to start the proxy for part 1
+
+```sh
+python3 part1/part1.py
+```
+
+Run the following command to start the proxy for part 2
+
+```sh
+python3 part2/part2.py
+```
+
+### 3. Querying The Proxy
+
+Run the following commands to test the proxies
+
+```sh
+dig @127.0.0.1 -p 1053 example.com A
+
+dig @127.0.0.1 -p 1053 google.com A
+```
+
+## Acknowledgements
+
+- [struct]("https://docs.python.org/3/library/struct.html")
+- [asyncio]("https://docs.python.org/3/library/asyncio.html")
+- [socket]("https://docs.python.org/3/library/socket.html")
+- [dnslib]("https://pypi.org/project/dnslib/")
