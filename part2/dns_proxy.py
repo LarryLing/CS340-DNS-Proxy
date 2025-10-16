@@ -1,32 +1,39 @@
-from asyncio import get_event_loop
+from asyncio import get_running_loop
+from functools import partial
+from json import dump
+from os import path
+from socket import AF_INET, SOCK_DGRAM, socket
 from struct import unpack
+from time import time
 
 from constants import (
     DNS_TYPE_FUNCTIONS,
     DNS_TYPES,
-    LOCAL_IP,
-    LOCAL_PORT,
-    RESOLVER_IP,
-    RESOLVER_PORT,
+    LOCAL_ADDR,
+    LOG_FILENAME,
+    RESOLVER_ADDR,
 )
-from dnslib import RR, DNSHeader, DNSQuestion, DNSRecord
+from dnslib import RR, DNSRecord
 from requests import get
 
 
 class DNSProxy:
     def __init__(self):
-        self.proxy_address = (LOCAL_IP, LOCAL_PORT)
-        self.resolver_address = (RESOLVER_IP, RESOLVER_PORT)
-        self.transport = None
+        self.socket = socket(AF_INET, SOCK_DGRAM)
+        self.socket.bind(LOCAL_ADDR)
+        self.socket.setblocking(False)
+        self.logs = []
 
-    async def handle_client(self, query_packet, client_address):
-        self.log_packet(query_packet, self.proxy_address)
+    async def handle_query(self, query_packet, client_address):
+        self.log_packet(query_packet, LOCAL_ADDR)
 
         response_packet = await self.invoke_doh_resolver(query_packet)
 
         if response_packet:
-            self.log_packet(response_packet, self.resolver_address)
-            self.transport.sendto(response_packet, client_address)
+            self.log_packet(response_packet, RESOLVER_ADDR)
+
+            loop = get_running_loop()
+            await loop.sock_sendto(self.socket, response_packet, client_address)
         else:
             print(f"Failed to communicate with DoH API resolver for {client_address}")
 
@@ -38,11 +45,13 @@ class DNSProxy:
 
         url = f"https://dns.google/resolve?name={domain_name}&type={DNS_TYPES[record_type]}"
 
-        loop = get_event_loop()
+        loop = get_running_loop()
 
         for attempt in range(1, max_attempts + 1):
             try:
-                http_response = await loop.run_in_executor(None, get, url)
+                http_response = await loop.run_in_executor(
+                    None, partial(get, url, timeout=5)
+                )
                 http_response.raise_for_status()
                 response_json_data = http_response.json()
 
@@ -57,19 +66,8 @@ class DNSProxy:
 
         return None
 
-    def build_dns_response(self, query_data, doh_response):
-        question = query_data.questions[0]
-
-        dns_response = DNSRecord(
-            DNSHeader(
-                id=query_data.header.id,
-                qr=1,
-                aa=0,
-                ra=1,
-                rcode=doh_response.get("Status", 0),
-            ),
-            q=DNSQuestion(question.qname, question.qtype),
-        )
+    def build_dns_response(self, dns_query, doh_response):
+        dns_response = dns_query.reply()
 
         for answer in doh_response.get("Answer", []):
             dns_response.add_answer(
@@ -78,6 +76,16 @@ class DNSProxy:
                     answer["type"],
                     ttl=answer["TTL"],
                     rdata=DNS_TYPE_FUNCTIONS[answer["type"]](answer["data"]),
+                )
+            )
+
+        for authority in doh_response.get("Authority", []):
+            dns_response.add_auth(
+                RR(
+                    authority["name"],
+                    authority["type"],
+                    ttl=authority["TTL"],
+                    rdata=DNS_TYPE_FUNCTIONS[authority["type"]](authority["data"]),
                 )
             )
 
@@ -106,3 +114,21 @@ class DNSProxy:
         print(
             f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[record_type]}, {len(packet)} bytes"
         )
+
+        self.logs.append(
+            {
+                "address": address,
+                "name": ".".join(labels),
+                "type": DNS_TYPES[record_type],
+                "length": len(packet),
+                "sent_at": int(time()),
+            }
+        )
+
+    def cleaup(self):
+        self.socket.close()
+
+        with open(
+            f"{path.dirname(path.realpath(__file__))}/{LOG_FILENAME}", "w"
+        ) as log_file:
+            dump(self.logs, log_file, indent=2)

@@ -42,6 +42,10 @@ dig @127.0.0.1 -p 1053 example.com A
 dig @127.0.0.1 -p 1053 google.com A
 ```
 
+### 4. Logging
+
+The logs in JSON format can be found in `dns_log.json` files in the respective folders. They will be written to after the proxy process has been terminated.
+
 ## Acknowledgements
 
 - [struct](https://docs.python.org/3/library/struct.html)

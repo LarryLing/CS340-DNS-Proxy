@@ -98,6 +98,6 @@ class DNSProxy:
         self.socket.close()
 
         with open(
-            f"{path.dirname(path.realpath(__file__))}/{LOG_FILENAME}", "a"
+            f"{path.dirname(path.realpath(__file__))}/{LOG_FILENAME}", "w"
         ) as log_file:
             dump(self.logs, log_file, indent=2)
