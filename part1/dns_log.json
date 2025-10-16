@@ -1,0 +1,16 @@
+[
+  {
+    "address": ["127.0.0.1", 1053],
+    "name": "example.com",
+    "type": "A",
+    "length": 40,
+    "sent_at": 1760584251
+  },
+  {
+    "address": ["8.8.8.8", 53],
+    "name": "example.com",
+    "type": "A",
+    "length": 136,
+    "sent_at": 1760584251
+  }
+]

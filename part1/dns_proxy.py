@@ -1,24 +1,30 @@
-from asyncio import TimeoutError, get_event_loop, wait_for
+from asyncio import TimeoutError, get_running_loop, wait_for
+from json import dump
+from os import path
 from socket import AF_INET, SOCK_DGRAM, socket
 from struct import unpack
+from time import time
 
-from constants import DNS_TYPES, LOCAL_IP, LOCAL_PORT, RESOLVER_IP, RESOLVER_PORT
+from constants import DNS_TYPES, LOCAL_ADDR, LOG_FILENAME, RESOLVER_ADDR
 
 
 class DNSProxy:
     def __init__(self):
-        self.proxy_address = (LOCAL_IP, LOCAL_PORT)
-        self.resolver_address = (RESOLVER_IP, RESOLVER_PORT)
-        self.transport = None
+        self.socket = socket(AF_INET, SOCK_DGRAM)
+        self.socket.bind(LOCAL_ADDR)
+        self.socket.setblocking(False)
+        self.logs = []
 
-    async def handle_client(self, query_packet, client_address):
-        self.log_packet(query_packet, self.proxy_address)
+    async def handle_query(self, query_packet, client_address):
+        self.log_packet(query_packet, LOCAL_ADDR)
 
         response_packet = await self.invoke_upstream_resolver(query_packet)
 
         if response_packet:
-            self.log_packet(response_packet, self.resolver_address)
-            self.transport.sendto(response_packet, client_address)
+            self.log_packet(response_packet, RESOLVER_ADDR)
+
+            loop = get_running_loop()
+            await loop.sock_sendto(self.socket, response_packet, client_address)
         else:
             print(f"Failed to communicate with upstream resolver for {client_address}")
 
@@ -26,14 +32,12 @@ class DNSProxy:
         resolver_socket = socket(AF_INET, SOCK_DGRAM)
         resolver_socket.setblocking(False)
 
-        loop = get_event_loop()
+        loop = get_running_loop()
 
         try:
             for attempt in range(1, max_attempts + 1):
                 try:
-                    await loop.sock_sendto(
-                        resolver_socket, query_packet, self.resolver_address
-                    )
+                    await loop.sock_sendto(resolver_socket, query_packet, RESOLVER_ADDR)
 
                     response_packet, _ = await wait_for(
                         loop.sock_recvfrom(resolver_socket, 2048), timeout=5.0
@@ -43,7 +47,7 @@ class DNSProxy:
 
                 except TimeoutError:
                     print(
-                        f"Timeout waiting for response from {self.resolver_address} (Attempt {attempt}/{max_attempts})"
+                        f"Timeout waiting for response from {RESOLVER_ADDR} (Attempt {attempt}/{max_attempts})"
                     )
 
                 except Exception as e:
@@ -79,3 +83,21 @@ class DNSProxy:
         print(
             f"{address}: {'.'.join(labels)}, Type {DNS_TYPES[record_type]}, {len(packet)} bytes"
         )
+
+        self.logs.append(
+            {
+                "address": address,
+                "name": ".".join(labels),
+                "type": DNS_TYPES[record_type],
+                "length": len(packet),
+                "sent_at": int(time()),
+            }
+        )
+
+    def cleaup(self):
+        self.socket.close()
+
+        with open(
+            f"{path.dirname(path.realpath(__file__))}/{LOG_FILENAME}", "a"
+        ) as log_file:
+            dump(self.logs, log_file, indent=2)
